@@ -1,0 +1,9 @@
+# Go workspace files (created by setup script)
+go.work
+go.work.sum
+
+# Cloned repositories (not part of this repo)
+livetemplate/
+lvt/
+examples/
+client/
