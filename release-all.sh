@@ -31,25 +31,24 @@ log_header() { echo -e "\n${BOLD}${CYAN}[$1]${NC}\n"; }
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Release order (tiers)
-# Tier 1: Core library (no dependencies)
-# Tier 2: Components (depends on core)
-# Tier 3: lvt, tinkerdown (depend on core, components)
-# Tier 4: Examples (depends on all)
-declare -a TIER_1=("livetemplate")
-declare -a TIER_2=("components")
-declare -a TIER_3=("lvt" "tinkerdown")
-declare -a TIER_4=("examples")
+# Release order (tiers) - using space-separated strings for bash 3.2 compatibility
+TIER_1="livetemplate"
+TIER_2="components"
+TIER_3="lvt tinkerdown"
+TIER_4="examples"
 
 # Repos that have releases (not just dependency updates)
-declare -a RELEASABLE_REPOS=("livetemplate" "components" "lvt" "tinkerdown")
+RELEASABLE_REPOS="livetemplate components lvt tinkerdown"
+
+# All repos
+ALL_REPOS="livetemplate components lvt tinkerdown examples"
 
 # GitHub org
 GITHUB_ORG="livetemplate"
 
 # Parse flags
 DRY_RUN=false
-while [[ $# -gt 0 ]]; do
+while [ $# -gt 0 ]; do
     case $1 in
         --dry-run)
             DRY_RUN=true
@@ -74,13 +73,13 @@ done
 
 # Check prerequisites
 check_prerequisites() {
-    local missing=()
+    local missing=""
 
-    command -v gh >/dev/null 2>&1 || missing+=("gh (GitHub CLI)")
-    command -v go >/dev/null 2>&1 || missing+=("go")
+    command -v gh >/dev/null 2>&1 || missing="$missing gh"
+    command -v go >/dev/null 2>&1 || missing="$missing go"
 
-    if [ ${#missing[@]} -ne 0 ]; then
-        log_error "Missing required tools: ${missing[*]}"
+    if [ -n "$missing" ]; then
+        log_error "Missing required tools:$missing"
         exit 1
     fi
 
@@ -166,12 +165,11 @@ run_tests() {
 preflight_checks() {
     log_header "Pre-flight Checks"
 
-    local all_repos=("${TIER_1[@]}" "${TIER_2[@]}" "${TIER_3[@]}" "${TIER_4[@]}")
     local failed=false
 
     # Check all repos exist
     log_step "Checking repos exist..."
-    for repo in "${all_repos[@]}"; do
+    for repo in $ALL_REPOS; do
         if ! check_repo_exists "$repo"; then
             log_error "$repo: not found at ${SCRIPT_DIR}/${repo}"
             failed=true
@@ -187,7 +185,7 @@ preflight_checks() {
 
     # Check all repos are clean
     log_step "Checking repos are clean..."
-    for repo in "${all_repos[@]}"; do
+    for repo in $ALL_REPOS; do
         if ! check_repo_clean "$repo"; then
             log_error "$repo: has uncommitted changes"
             failed=true
@@ -203,7 +201,7 @@ preflight_checks() {
 
     # Run tests for all repos
     log_step "Running tests across all repos..."
-    for repo in "${all_repos[@]}"; do
+    for repo in $ALL_REPOS; do
         if ! run_tests "$repo"; then
             log_error "$repo: tests failed"
             failed=true
@@ -220,6 +218,15 @@ preflight_checks() {
     log_info "All pre-flight checks passed"
 }
 
+# Check if repo is releasable
+is_releasable() {
+    local repo=$1
+    case " $RELEASABLE_REPOS " in
+        *" $repo "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Show release plan
 show_release_plan() {
     log_header "Release Plan"
@@ -229,30 +236,56 @@ show_release_plan() {
     echo "The following repos will be released in order:"
     echo ""
 
-    for tier_name in "TIER_1" "TIER_2" "TIER_3" "TIER_4"; do
-        local -n tier="$tier_name"
+    # Tier 1
+    for repo in $TIER_1; do
+        local current_version
+        current_version=$(get_current_version "$repo")
 
-        for repo in "${tier[@]}"; do
-            local current_version
-            local is_releasable=false
+        if is_releasable "$repo"; then
+            printf "  %d. %-15s v%-10s -> (new version)\n" "$step" "$repo" "$current_version"
+        else
+            printf "  %d. %-15s (dependency update only)\n" "$step" "$repo"
+        fi
+        step=$((step + 1))
+    done
 
-            current_version=$(get_current_version "$repo")
+    # Tier 2
+    for repo in $TIER_2; do
+        local current_version
+        current_version=$(get_current_version "$repo")
 
-            # Check if repo is releasable
-            for r in "${RELEASABLE_REPOS[@]}"; do
-                if [ "$r" = "$repo" ]; then
-                    is_releasable=true
-                    break
-                fi
-            done
+        if is_releasable "$repo"; then
+            printf "  %d. %-15s v%-10s -> (new version)\n" "$step" "$repo" "$current_version"
+        else
+            printf "  %d. %-15s (dependency update only)\n" "$step" "$repo"
+        fi
+        step=$((step + 1))
+    done
 
-            if [ "$is_releasable" = true ]; then
-                printf "  %d. %-15s v%-10s -> (new version)\n" "$step" "$repo" "$current_version"
-            else
-                printf "  %d. %-15s (dependency update only)\n" "$step" "$repo"
-            fi
-            ((step++))
-        done
+    # Tier 3
+    for repo in $TIER_3; do
+        local current_version
+        current_version=$(get_current_version "$repo")
+
+        if is_releasable "$repo"; then
+            printf "  %d. %-15s v%-10s -> (new version)\n" "$step" "$repo" "$current_version"
+        else
+            printf "  %d. %-15s (dependency update only)\n" "$step" "$repo"
+        fi
+        step=$((step + 1))
+    done
+
+    # Tier 4
+    for repo in $TIER_4; do
+        local current_version
+        current_version=$(get_current_version "$repo")
+
+        if is_releasable "$repo"; then
+            printf "  %d. %-15s v%-10s -> (new version)\n" "$step" "$repo" "$current_version"
+        else
+            printf "  %d. %-15s (dependency update only)\n" "$step" "$repo"
+        fi
+        step=$((step + 1))
     done
 
     echo ""
@@ -336,7 +369,7 @@ main() {
 
         # Show what would happen for each tier
         log_header "Dry Run: Tier 1 (Core)"
-        for repo in "${TIER_1[@]}"; do
+        for repo in $TIER_1; do
             release_repo "$repo"
         done
 
@@ -344,12 +377,12 @@ main() {
         create_dependency_prs
 
         log_header "Dry Run: Tier 2"
-        for repo in "${TIER_2[@]}"; do
+        for repo in $TIER_2; do
             release_repo "$repo"
         done
 
         log_header "Dry Run: Tier 3"
-        for repo in "${TIER_3[@]}"; do
+        for repo in $TIER_3; do
             release_repo "$repo"
         done
 
@@ -363,14 +396,17 @@ main() {
     echo ""
     read -rp "Proceed with release? [y/N]: " confirm
 
-    if [[ ! $confirm =~ ^[Yy]$ ]]; then
-        log_warn "Release cancelled"
-        exit 0
-    fi
+    case "$confirm" in
+        [Yy]*) ;;
+        *)
+            log_warn "Release cancelled"
+            exit 0
+            ;;
+    esac
 
     # Tier 1: Release core library
     log_header "Step 1: Release Core Library"
-    for repo in "${TIER_1[@]}"; do
+    for repo in $TIER_1; do
         release_repo "$repo"
     done
 
@@ -382,7 +418,7 @@ main() {
 
     # Tier 2: Release components
     log_header "Step 3: Release Components"
-    for repo in "${TIER_2[@]}"; do
+    for repo in $TIER_2; do
         release_repo "$repo"
     done
 
@@ -394,7 +430,7 @@ main() {
 
     # Tier 3: Release lvt and tinkerdown
     log_header "Step 5: Release CLI and Tinkerdown"
-    for repo in "${TIER_3[@]}"; do
+    for repo in $TIER_3; do
         release_repo "$repo"
     done
 
@@ -408,7 +444,7 @@ main() {
     log_info "All releases complete!"
     echo ""
     echo "Released repos:"
-    for repo in "${RELEASABLE_REPOS[@]}"; do
+    for repo in $RELEASABLE_REPOS; do
         local version
         version=$(get_latest_release "$repo")
         echo "  - ${GITHUB_ORG}/${repo}@${version:-'(check GitHub)'}"
